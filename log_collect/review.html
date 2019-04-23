@@ -5,12 +5,35 @@
     <title>Title</title>
     <script>
         //写cookie  key=value
-        document.cookie="uuid=123";
+        document.cookie="uuid=123;expires=";
         document.cookie="sid=456";
         document.cookie="mid=789";
         //获取cookie数据  uuid=123;sid=456;mid=789
-        console.log(document.cookie)
+        console.log(document.cookie);
 
+        //js 定义一个对象
+        var student = {
+            id:1,
+            name:"雅倩",
+            say: function () {
+                alert("你真好看...")
+            },
+            boyFriend:{name:"嗯哼"},
+            habbit:["听歌","看书"]
+        };
+       /* //获取属性的值
+        console.log("id="+student["id"]);
+        console.log("name="+student.name);
+        student.say()
+        console.log("boyFriend name="+student.boyFriend.name)
+        console.log("habbit="+student.habbit[0])
+        //给实例对象动态添加属性
+        student.age=19;
+        alert(student.age)
+        //遍历对象的属性和属性值
+        for(key in student){
+            console.log(key+"="+student[key])
+        }*/
 
     </script>
 </head>
