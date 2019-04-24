@@ -4,8 +4,20 @@
     <meta charset="UTF-8">
     <title>Title</title>
     <script src="tracker.js"></script>
+    <script>
+        function btnSearch() {
+            var keyword = document.getElementById("kw").value;
+            window.__AE__.searchEvent(keyword)
+        }
+        
+        function addCart() {
+            var pid = document.getElementById("img1").getAttribute("data-sn");
+            window.__AE__.addCartEvent(pid)
+        }
+    </script>
 </head>
 <body>
-
+    <input type="text" id="kw" style="width: 500px;"><input type="button" value="搜素" onclick="btnSearch()">
+    <img src="1.jpeg" id="img1" style="width: 50%;height: 50%" data-sn="001"><input type="button" value="加入购物车" onclick="addCart()">
 </body>
 </html>

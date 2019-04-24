@@ -303,5 +303,17 @@
              }
 
          };
-        tracker.sessionStart();
+    //给window对象注入属性__AE__
+    window.__AE__={
+        sessionStart:function () {
+            tracker.sessionStart();
+        },
+        searchEvent:function (keyword) {
+            tracker.searchEvent(keyword)
+        },
+        addCartEvent:function (pid) {
+            tracker.addCartEvent(pid)
+        }
+    };
+    window.__AE__.sessionStart();
 })();
