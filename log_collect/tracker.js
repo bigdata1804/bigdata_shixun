@@ -246,7 +246,7 @@
                          paramsText=paramsText.substring(0,paramsText.length-1);
                          var url=this.clientConfig.logServerUrl+"?"+paramsText;
                          var i=new Image(1,1);
-                         i.src=url
+                         i.src=url;
                          //更新用户最近一次访问时间
                         this.updatePreVisitTime()
              },
