@@ -34,10 +34,10 @@ object AnalysisLog {
     * 解析收集的用户行为数据，添加到logMap中
     */
   def handleRequestParams(logMap: mutable.Map[String, String], requestParams: String) = {
-    val fields: Array[String] = requestParams.split("?")
+    val fields: Array[String] = requestParams.split("[?]")
     if(fields.length==2 && StringUtils.isNotBlank(fields(1))){
       val paramsText = fields(1)
-      val items: Array[String] = paramsText.split("&")
+      val items: Array[String] = paramsText.split("[&]")
       for(item <- items){
         val kv: Array[String] = item.split("=")
         if(kv.length==2&&StringUtils.isNotBlank(kv(0))&&StringUtils.isNotBlank(kv(1))){
@@ -55,7 +55,7 @@ object AnalysisLog {
   def analysisLog(logText: String,ipRuleArray:Array[IPRule])={
   var logMap:mutable.Map[String,String]=null
   if(StringUtils.isNotBlank(logText)){
-    val fields: Array[String] = logText.split("|")
+    val fields: Array[String] = logText.split("[|]")
     if(fields.length==4){
       logMap=mutable.Map[String,String]()
       logMap.put(LogConstants.LOG_COLUMNS_NAME_IP,fields(0))

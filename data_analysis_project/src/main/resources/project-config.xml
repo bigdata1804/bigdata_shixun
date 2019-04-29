@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+
+    <property>
+        <name>ip.rule.data.path</name>
+        <value>/shixun_2/ip.txt</value>
+    </property>
+
+    <property>
+        <name>log.path.prefix</name>
+        <value>/logs/</value>
+    </property>
+
+</configuration>

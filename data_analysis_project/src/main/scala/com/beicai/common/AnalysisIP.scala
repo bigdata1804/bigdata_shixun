@@ -34,7 +34,7 @@ object AnalysisIP {
   /**
     * 二分查找法，找到了返回对应的角标，找不到返回-1
     *
-    * @param numIP
+    * @param numIp
     * @param ipRuleArray
     */
 
@@ -45,12 +45,12 @@ object AnalysisIP {
     breakable(while (min<=max){
       var middle=(min+max)/2
       val iPRule = ipRuleArray(middle)
-      if(numIp>=iPRule.startIp&&numIp<=iPRule.endIp){
+      if(numIp>=iPRule.startIP&&numIp<=iPRule.endIP){
         index=middle
         break()
-      }else if(numIp<iPRule.startIp){
+      }else if(numIp<iPRule.startIP){
         max=middle-1
-      }else if(numIp>iPRule.endIp){
+      }else if(numIp>iPRule.endIP){
         min=middle+1
       }
     })

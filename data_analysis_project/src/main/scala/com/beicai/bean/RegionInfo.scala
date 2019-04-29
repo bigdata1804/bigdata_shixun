@@ -1,7 +1,6 @@
 package com.beicai.bean
 
 import com.beicai.constants.GlobalConstants
-import org.apache.spark.SparkConf
 
 /**
   * Created by lenovo on 2019/4/25.
