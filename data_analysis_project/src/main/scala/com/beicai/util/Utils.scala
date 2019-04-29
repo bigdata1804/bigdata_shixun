@@ -3,7 +3,13 @@ package com.beicai.util
 import java.text.SimpleDateFormat
 import java.util.{Calendar, Date}
 import java.util.regex.Pattern
-import  scala.util.control.Breaks._
+
+import scala.util.control.Breaks._
+import java.math.BigDecimal
+
+import com.beicai.enum.DateTypeEnum
+
+import scala.math.BigDecimal.RoundingMode
 
 /**
   * Created by lenovo on 2019/4/25.
@@ -120,4 +126,45 @@ object Utils {
   }
 
 
+  /**
+    * 四舍五入函数
+    *
+    * @param doubleValue
+    * 需要进行四舍五入的数据
+    * @param scale
+    * 保留的小数位
+    */
+  def getScale(doubleValue:Double,scale:Int)={
+   val bigDecimal = new BigDecimal(doubleValue)
+    bigDecimal.setScale(scale,RoundingMode.HALF_UP).doubleValue()
+  }
+
+
+  /**
+    * 获取日期单位，比如：年，季度，月，周，天
+    * @param inputDate
+    * @param dateType
+    * @return
+    */
+  def getDateInfo(inputDate:String,dateType:DateTypeEnum.Value)={
+    val longTime=parseDate(inputDate,"yyyy-MM-dd")
+    val calendar = Calendar.getInstance()
+    calendar.setTimeInMillis(longTime)
+    if(dateType.equals(DateTypeEnum.YEAR)){
+      calendar.get(Calendar.YEAR)
+    }else if(dateType.equals(DateTypeEnum.SEASON)){
+      val month =  calendar.get(Calendar.MONTH)+1
+      if(month % 3 == 0){
+        month / 3
+      }else{
+        month /3 + 1
+      }
+    } else if (dateType.equals(DateTypeEnum.MONTH)) {
+      calendar.get(Calendar.MONTH) + 1 //获取的到月份是0-11
+    } else if (dateType.equals(DateTypeEnum.WEEK)) {
+      calendar.get(Calendar.WEEK_OF_YEAR)
+    } else {
+      calendar.get(Calendar.DAY_OF_MONTH)
+    }
+  }
 }

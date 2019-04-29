@@ -9,7 +9,7 @@
 
     <property>
         <name>jdbc.url</name>
-        <value>jdbc:mysql://192.168.189.121:3306/test?characterEncoding=utf-8</value>
+        <value>jdbc:mysql://localhost:3306/bi?characterEncoding=utf-8</value>
     </property>
 
     <property>
@@ -19,6 +19,6 @@
 
     <property>
         <name>jdbc.password</name>
-        <value>root</value>
+        <value>123</value>
     </property>
 </configuration>

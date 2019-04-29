@@ -1,7 +1,11 @@
 package com.beicai.task.analysis
 
+import com.beicai.bean.domain.SessionAggrStat
+import com.beicai.bean.domain.dimension.{DateDimension, PlatformDimension}
 import com.beicai.constants.{GlobalConstants, LogConstants}
+import com.beicai.dao.{DimensionDao, SessionAggrStatDao}
 import com.beicai.enum.EventEnum
+import com.beicai.jdbc.JdbcHelper
 import com.beicai.task.BaseTask
 import com.beicai.util.Utils
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
@@ -186,9 +190,42 @@ object SessionAnalysisTask extends BaseTask{
       *
       * */
 
-  }
-  
 
+  val connection = JdbcHelper.getConnection()
+    val sessionAggrStatArray: Array[SessionAggrStat] = sessionTimeAndStepLengthRangeRDD.collect().map(t2 => {
+      val sessionAggrStat = new SessionAggrStat()
+      val accessTime = t2._1._1
+      val platform = t2._1._2
+      sessionAggrStat.date_dimension_id = DimensionDao.getDimensionId(DateDimension.buildDateDimension(accessTime), connection)
+      sessionAggrStat.platform_dimension_id = DimensionDao.getDimensionId(new PlatformDimension(0, platform), connection)
+      sessionAggrStat.session_count = Utils.getFieldValue(t2._2, GlobalConstants.SESSION_COUNT).toInt
+      sessionAggrStat.time_1s_3s = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_1s_3s).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_4s_6s = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_4s_6s).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_7s_9s = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_7s_9s).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_10s_30s = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_10s_30s).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_30s_60s = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_30s_60s).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_1m_3m = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_1m_3m).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_3m_10m = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_3m_10m).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_10m_30m = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_10m_30m).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.time_30m = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.TIME_30m).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.step_1_3 = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.STEP_1_3).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.step_4_6 = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.STEP_4_6).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.step_7_9 = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.STEP_7_9).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.step_10_30 = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.STEP_10_30).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.step_30_60 = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.STEP_30_60).toDouble / sessionAggrStat.session_count, 2)
+      sessionAggrStat.step_60 = Utils.getScale(Utils.getFieldValue(t2._2, GlobalConstants.STEP_60).toDouble / sessionAggrStat.session_count, 2)
+
+      sessionAggrStat
+    })
+    if(connection!=null){
+      connection.close()
+    }
+
+    //将sessionAggrStatArray保持到mysql中
+    SessionAggrStatDao.deleteByDateDimensionId(sessionAggrStatArray(0).date_dimension_id)
+    SessionAggrStatDao.insertBatch(sessionAggrStatArray)
+
+  }
 
 
   def main(args: Array[String]): Unit = {
@@ -201,5 +238,6 @@ object SessionAnalysisTask extends BaseTask{
     //3,按时间和平台维度对我们的session进行统计分析，将结果保持到mysql表中
     sessionVisitTimeAndStepLengthAnalysisStat(eventLogRDD)
 
+    sc.stop()
   }
 }
