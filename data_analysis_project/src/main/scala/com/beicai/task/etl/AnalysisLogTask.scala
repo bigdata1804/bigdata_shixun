@@ -11,8 +11,10 @@ import org.apache.hadoop.hbase.client.Put
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
 import org.apache.hadoop.mapred.JobConf
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkConf, SparkContext, SparkException}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.LongAccumulator
 
 import scala.collection.mutable
 
@@ -25,10 +27,6 @@ import scala.collection.mutable
 object AnalysisLogTask extends BaseTask{
     var inputPath:String=null;
 
-  //输入记录数的累加器
-    val inputRecordAccumulator=sc.longAccumulator("inputRecordAccumulator")
-  //过滤记录数累加器
-    val filterRecordAccumulator = sc.longAccumulator("filterRecordAccumulator")
 
   /**
     * 2,验证当天是否存在用户行为日志
@@ -62,7 +60,7 @@ object AnalysisLogTask extends BaseTask{
     * 3 使用spark加载ip规则
     */
 
-    private def loadIPRule()={
+    private def loadIPRule(sc:SparkContext)={
       val ipRuleArray: Array[IPRule] = sc.textFile(ConfigurationManager.getValue(GlobalConstants.CONFIG_IP_RULE_DATA_PATH), 2).map(line => {
 
         //1.0.1.0|1.0.3.255|16777472|16778239|亚洲|中国|福建|福州||电信|350100|China|CN|119.306239|26.075302
@@ -71,13 +69,12 @@ object AnalysisLogTask extends BaseTask{
       }).collect()
       ipRuleArray
     }
-
   /**
     * 4,使用spark加载用户行为日志，进行解析
     * @param ipRuleArray
     * @return
     */
-  private def loadLogFromHdfs(ipRuleArray: Array[IPRule]) = {
+  private def loadLogFromHdfs(ipRuleArray: Array[IPRule],sc:SparkContext,inputRecordAccumulator:LongAccumulator,filterRecordAccumulator:LongAccumulator) = {
     /**
       * 广播变量是共享变量，每个task都能共享，这样不至于每个task都需要去driver端拷贝这个副本
       * 可以降低网络流量消耗，降低executor内存消耗，加快spark作用运行效率，降低失败概率
@@ -131,6 +128,16 @@ object AnalysisLogTask extends BaseTask{
   }
 
   def main(args: Array[String]): Unit = {
+    val sparkConf = new SparkConf().setAppName(this.getClass.getSimpleName).setMaster("spark://hadoop-001:7077")
+    val spark = SparkSession.builder().config(sparkConf).getOrCreate()
+    val sc = spark.sparkContext
+    sc.addJar("D:\\bigdata_shixun_project\\data_analysis_project\\target\\data_analysis_project-1.0-SNAPSHOT.jar")
+
+    //输入记录数的累加器
+    val inputRecordAccumulator=sc.longAccumulator("inputRecordAccumulator")
+    //过滤记录数累加器
+    val filterRecordAccumulator = sc.longAccumulator("filterRecordAccumulator")
+
       //1,验证参数是否正确
       validateInputArgs(args)
 
@@ -138,10 +145,10 @@ object AnalysisLogTask extends BaseTask{
       validateExistsLog()
 
       // 3,使用spark加载ip规则
-      val ipRuleArray = loadIPRule()
+      val ipRuleArray = loadIPRule(sc)
 
       //4,使用spark加载用户行为日志，进行解析
-      val logRDD = loadLogFromHdfs(ipRuleArray)
+      val logRDD = loadLogFromHdfs(ipRuleArray,sc,inputRecordAccumulator,filterRecordAccumulator)
 
       //5,将解析好的日志，保存到hbase上
       saveLogToHbase(logRDD)

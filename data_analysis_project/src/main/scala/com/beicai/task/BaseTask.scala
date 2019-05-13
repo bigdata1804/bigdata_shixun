@@ -12,9 +12,6 @@ trait BaseTask {
 
    val configuration = new Configuration()
   configuration.addResource("hbase-site.xml")
-  val sparkConf = new SparkConf().setAppName(this.getClass.getSimpleName).setMaster("local")
-  val spark = SparkSession.builder().config(sparkConf).getOrCreate()
-  val sc = spark.sparkContext
 
   //输入任务参数
   var inputDate:String=null

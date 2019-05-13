@@ -8,7 +8,7 @@
     <artifactId>data_analysis_project</artifactId>
     <version>1.0-SNAPSHOT</version>
     <properties>
-        <spark.version>2.2.0</spark.version>
+        <spark.version>2.2.1</spark.version>
     </properties>
 
     <dependencies>

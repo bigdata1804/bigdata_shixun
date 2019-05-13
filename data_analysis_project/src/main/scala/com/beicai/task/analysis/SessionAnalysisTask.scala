@@ -1,22 +1,28 @@
 package com.beicai.task.analysis
 
-import com.beicai.bean.domain.SessionAggrStat
-import com.beicai.bean.domain.dimension.{DateDimension, PlatformDimension}
+import com.beicai.bean.domain.dimension.{DateDimension, EventDimension, LocationDimension, PlatformDimension}
+import com.beicai.bean.domain._
 import com.beicai.constants.{GlobalConstants, LogConstants}
-import com.beicai.dao.{DimensionDao, SessionAggrStatDao}
+import com.beicai.dao._
 import com.beicai.enum.EventEnum
 import com.beicai.jdbc.JdbcHelper
 import com.beicai.task.BaseTask
 import com.beicai.util.Utils
+import org.apache.commons.lang.StringUtils
+import org.apache.hadoop.hbase.client.{Result, Scan}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapreduce.TableInputFormat
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil
-import org.apache.hadoop.hbase.client.{Result, Scan}
 import org.apache.hadoop.hbase.util.{Base64, Bytes}
 import org.apache.hadoop.mapred.JobConf
+import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 import scala.collection.immutable.Iterable
+import scala.collection.mutable
+
 
 /**
   * Created by lenovo on 2019/4/28.
@@ -27,7 +33,7 @@ object SessionAnalysisTask extends BaseTask{
   /**
     * 从hbase中加载指定日期当前的所有日志
     */
-  def loadDataFromHbase() = {
+  def loadDataFromHbase(sc:SparkContext) = {
     val startDateTime = Utils.parseDate(inputDate,"yyyy-MM-dd").toString
     val endDateTime = Utils.getNextDate(startDateTime.toLong).toString
     val scan: Scan = new Scan()
@@ -85,7 +91,7 @@ object SessionAnalysisTask extends BaseTask{
       * ((2019-04-25,pc),(BED1F858-B563-4F79-B331-24782849C6DB,1556199191874,e_bp,pc))
       * ((2019-04-25,ios),(EC1FFF28-7BA6-45CB-94C5-30505899DB37,1556199192689,e_l,ios))
       */
-      val tuple2RDD = tuple4RDD.map(t4=>((Utils.formatDate(t4._2.toLong,"yyyy-MM-dd"),t4._4),t4))
+    val tuple2RDD = tuple4RDD.map(t4=>((Utils.formatDate(t4._2.toLong,"yyyy-MM-dd"),t4._4),t4))
     //根据平台维度，一条日志需要变成2条日志
     val flatMapRDD: RDD[((String, String), (String, String, String, String))] = tuple2RDD.flatMap(t2 => {
       Array(
@@ -191,7 +197,7 @@ object SessionAnalysisTask extends BaseTask{
       * */
 
 
-  val connection = JdbcHelper.getConnection()
+    val connection = JdbcHelper.getConnection()
     val sessionAggrStatArray: Array[SessionAggrStat] = sessionTimeAndStepLengthRangeRDD.collect().map(t2 => {
       val sessionAggrStat = new SessionAggrStat()
       val accessTime = t2._1._1
@@ -228,16 +234,297 @@ object SessionAnalysisTask extends BaseTask{
   }
 
 
+  /**
+    * 统计同一天同一个平台活跃用户数，新增用户数，会话个数
+    *
+    * @param eventLogRDD
+    * (uid, sid, accessTime, eventName, country, province, city, platform, browserName, productId, osName)
+    */
+
+  def userStats(eventLogRDD: RDD[(String, String, String, String, String, String, String, String, String, String, String)]) = {
+    //获取需要的字段(uid, sid, accessTime, eventName,platform)
+    val tuple5RDD: RDD[(String, String, String, String, String)] = eventLogRDD.map(t11=>(t11._1,t11._2,t11._3,t11._4,t11._8))
+    //将tuple5RDD封装成对偶元组((accessTime,platform),(uid,sid,eventName))
+    val tuple2RDD = tuple5RDD.map(t5=>((Utils.formatDate(t5._3.toLong,"yyyy-MM-dd"),t5._5),(t5._1,t5._2,t5._4)))
+    //区分所有的平台和具体的平台
+    val flatMapRDD: RDD[((String, String), (String, String, String))] = tuple2RDD.flatMap(t2 => {
+      Array(
+        //所有平台
+        ((t2._1._1, GlobalConstants.VALUE_OF_ALL), t2._2),
+        //具体平台
+        t2
+      )
+    })
+    //按时间为平台维度进行聚合((accessTime,platform),List((uid,sid,eventName),(uid,sid,eventName),(uid,sid,eventName),...))
+    val groupRDD = flatMapRDD.groupByKey()
+
+    val tuple2Array: Array[((String, String), (Int, Int, Int, Int))] = groupRDD.map(t2 => {
+      var newUserCount: Int = 0
+      var pageViewCount: Int = 0
+      val uidSet = mutable.Set[String]()
+      val sidSet = mutable.Set[String]()
+      t2._2.foreach(t3 => {
+        val uid = t3._1
+        val sid = t3._2
+        val eventName = t3._3
+        uidSet.add(uid)
+        sidSet.add(sid)
+        if (eventName.equals(EventEnum.LAUNCH_EVENT.toString)) newUserCount += 1
+        if (eventName.equals(EventEnum.PAGE_VIEW_EVENT.toString) || eventName.equals(EventEnum.BROWSER_PRODUCT_EVENT.toString)) pageViewCount += 1
+      })
+      val active_users = uidSet.size
+      val new_install_users = newUserCount
+      val session_count = sidSet.size
+      val session_length = pageViewCount / session_count
+      (t2._1, (active_users, new_install_users, session_count, session_length))
+    }).collect()
+
+    val connection=JdbcHelper.getConnection()
+    val statsUserArray: Array[StatsUser] = tuple2Array.map(t2 => {
+      //t2==>((accessTime,platform),(active_users, new_install_users, session_count, session_length))
+      val date_dimension_id = DimensionDao.getDimensionId(DateDimension.buildDateDimension(t2._1._1), connection)
+      val platform_dimension_id = DimensionDao.getDimensionId(new PlatformDimension(0, t2._1._2), connection)
+      val active_users: Int = t2._2._1
+      val new_install_users = t2._2._2
+      val session_count = t2._2._3
+      val session_length = t2._2._4
+      val created = t2._1._1
+
+      new StatsUser(date_dimension_id, platform_dimension_id, active_users, new_install_users, session_count, session_length, created)
+    })
+
+    //将结果保存到mysql表中
+    StatsUserDao.deleteByDateDimensionId(statsUserArray(0).date_dimension_id)
+    StatsUserDao.insertBatch(statsUserArray)
+
+  }
+
+  /**
+    * 统计同一天同一个平台同一个地区活跃用户数，会话个数，会话跳出数
+    * 会话跳出数:只访问了一个页面  一个sessionId
+    * @param eventLogRDD
+    * (uid, sid, accessTime, eventName, country, province, city, platform, browserName, productId, osName)
+    */
+
+  def deviceLocationStats(eventLogRDD: RDD[(String, String, String, String, String, String, String, String, String, String, String)]) = {
+
+    val tuple8RDD = eventLogRDD.map(t11=>(t11._1,t11._2,t11._3,t11._5,t11._6,t11._7,t11._8))
+
+    //((day,platform,country,province,city),(uid,sid))
+
+    val tuple2RDD=tuple8RDD.map(t7=>((Utils.formatDate(t7._3.toLong,"yyyy-MM-dd"),t7._7,t7._4,t7._5,t7._6),(t7._1,t7._2)))
+
+    val flatMap = tuple2RDD.flatMap(t2 => {
+      Array(
+        //所有平台-全国
+        ((t2._1._1, GlobalConstants.VALUE_OF_ALL, t2._1._3,  GlobalConstants.VALUE_OF_ALL,  GlobalConstants.VALUE_OF_ALL), t2._2),
+        //所有平台-全省
+        ((t2._1._1, GlobalConstants.VALUE_OF_ALL, t2._1._3, t2._1._4, GlobalConstants.VALUE_OF_ALL), t2._2),
+        //所有平台-全市
+        ((t2._1._1, GlobalConstants.VALUE_OF_ALL, t2._1._3, t2._1._4, t2._1._5), t2._2),
+
+        //具体平台-全国
+        ((t2._1._1, t2._1._2, t2._1._3, GlobalConstants.VALUE_OF_ALL, GlobalConstants.VALUE_OF_ALL), t2._2),
+        //具体平台-全省
+        ((t2._1._1, t2._1._2, t2._1._3, t2._1._4, GlobalConstants.VALUE_OF_ALL), t2._2),
+        //具体平台-全市
+        t2
+      )
+    })
+    //((day,platform,country,province,city),List((uid,sid),(uid,sid),(uid,sid),....))
+    val groupRDD = flatMap.groupByKey()
+
+    val tuple2Array = groupRDD.map(t2 => {
+
+      val uidSet = mutable.Set[String]()
+      val sidMap = mutable.Map[String,Int]()
+
+      t2._2.foreach(tup2 => {
+        val uid = tup2._1
+        val sid = tup2._2
+        uidSet.add(uid)
+        sidMap.put(sid,sidMap.getOrElse(sid,0)+1)
+
+      })
+      //活跃用户数
+      val active_users = uidSet.size
+      //会话个数
+      val sessions = sidMap.size
+      //会话跳出数
+      val bounce_sessions = sidMap.filter(x  => x._2==1).size
+      (t2._1, (active_users, sessions, bounce_sessions))
+    }).collect()
+    val connection=JdbcHelper.getConnection()
+    val statisticsUser = tuple2Array.map(t2 => {
+      val date_dimension_id = DimensionDao.getDimensionId(DateDimension.buildDateDimension(t2._1._1), connection)
+      val platform_dimension_id = DimensionDao.getDimensionId(new PlatformDimension(0, t2._1._2), connection)
+      val location_dimension_id = DimensionDao.getDimensionId(new LocationDimension(0,t2._1._3,t2._1._4,t2._1._5),connection)
+      val active_users = t2._2._1
+      val sessions = t2._2._2
+      val bounce_sessions = t2._2._3
+      val created = t2._1._1
+      new StatsDeviceLocation(date_dimension_id, platform_dimension_id, location_dimension_id, active_users, sessions, bounce_sessions, created)
+    })
+    if (connection != null)
+      connection.close()
+    StatsDeviceLocationDao.deleteByDateDimensionId(statisticsUser(0).date_dimension_id)
+    StatsDeviceLocationDao.insertBatch(statisticsUser)
+  }
+
+  def UserCount(eventLogRDD: RDD[(String, String, String, String, String, String, String, String, String, String, String)]) = {
+    val tupleRDD = eventLogRDD.map(t11=>((Utils.formatDate(t11._3.toLong,"yyyy-MM-dd"),t11._8,t11._4),1))
+    val flatMapRDD = tupleRDD.flatMap(tup => {
+      Array(
+        //所有平台 具体事件
+        ((tup._1._1, GlobalConstants.VALUE_OF_ALL, tup._1._3),tup._2),
+        //所有平台所有事件
+        ((tup._1._1, GlobalConstants.VALUE_OF_ALL, GlobalConstants.VALUE_OF_ALL),tup._2),
+        //具体平台所有事件
+        ((tup._1._1, tup._1._2, GlobalConstants.VALUE_OF_ALL),tup._2),
+        //具体平台具体事件
+        tup
+      )
+    })
+    val reduceRDD = flatMapRDD.reduceByKey(_+_)
+    val connection = JdbcHelper.getConnection()
+    val statsEventArray = reduceRDD.collect().map(t2 => {
+      //t2==>((day,platform,eventName),1)
+      val date_dimension_id: Int = DimensionDao.getDimensionId(DateDimension.buildDateDimension(t2._1._1), connection)
+      val platform_dimension_id: Int = DimensionDao.getDimensionId(new PlatformDimension(0, t2._1._2), connection)
+      val event_dimension_id: Int = DimensionDao.getDimensionId(EventDimension.buildEventDimension(t2._1._3), connection)
+      val times: Int = t2._2
+      val created: String = t2._1._1
+      new StatsEvent(date_dimension_id, platform_dimension_id, event_dimension_id, times, created)
+    })
+    if (connection != null)
+      connection.close()
+    //将数据保存到mysql中
+    StatsEventDao.deleteByDateDimensionId(statsEventArray(0).date_dimension_id)
+    StatsEventDao.insertBatch(statsEventArray)
+
+  }
+
+  /**
+    * 统计同一天同一地区浏览次数排名前3的商品
+    *
+    * @param eventLogRDD
+    * (uid, sid, accessTime, eventName, country, province, city, platform, browserName, productId, osName)
+    */
+
+  def areaBrowserProductTop3Stats(eventLogRDD: RDD[(String, String, String, String, String, String, String, String, String, String, String)],spark:SparkSession) = {
+    val rowRDD: RDD[Row] = eventLogRDD.filter(x => x._4.equals(EventEnum.BROWSER_PRODUCT_EVENT.toString) && StringUtils.isNotBlank(x._10))
+      .map(t11 => Row(Utils.formatDate(t11._3.toLong, "yyyy-MM-dd"), t11._5, t11._6, t11._7, t11._10))
+
+    /**
+      * rdd转换成dataframe有两种方式
+      * dataframe=rdd+schema
+      * 这个rdd里面的数据类型必须是一个行对象row
+      * 1，通过反射推断每一列的列名和列的数据类型
+      * 2，自定义元数据（指定了列名和列的数据类型）
+      */
+
+    val schema=StructType(
+      List(
+        StructField("date",StringType,false),
+        StructField("country",StringType,false),
+        StructField("province",StringType,false),
+        StructField("city",StringType,false),
+        StructField("product_id",StringType,false)
+      )
+    )
+
+    //将rdd和schema进行关联
+    /**
+      * createOrReplaceTempView : 创建了一个局部视图，如果在当前上下文中存在相同名称的视图，那么就替换这个视图
+      * createTempView:创建了一个局部视图，如果在当前上下文中存在相同名称的视图，那么就抛异常
+      *
+      * createOrReplaceGlobalTempView: 创建了一个全局视图，如果在当前上下文中存在相同名称的视图，那么就替换这个视图
+      * createGlobalTempView:创建了一个全局视图，如果在当前上下文中存在相同名称的视图，那么就抛异常
+      */
+
+    spark.createDataFrame(rowRDD,schema).createOrReplaceTempView("area_browser_product_view")
+
+    // 统计同一天同一地区 浏览每种商品的次数
+
+    spark.sql(
+      """
+        |
+        |select date,country,province,city,product_id,count(product_id) as browser_count
+        |from area_browser_product_view
+        |group by date,country,province,city,product_id
+        |
+      """.stripMargin).createOrReplaceTempView("area_browser_product_count_view")
+
+    //注册用户自定义聚合函数
+    spark.udf.register("city_concat_func", new CityConcatUDAF)
+
+    //spark sql 默认在shuffle read阶段有200个分区,由于我们的数量比较小，所以不需要这么多分区
+
+    val df = spark.sql(
+      """
+        |select date,country,province,product_id,browser_count,city_infos
+        |from(
+        |   select row_number()over(partition by date,country,province order by  browser_count desc)rank,
+        |   date,country,province,product_id,browser_count,city_infos
+        |   from(
+        |         select date,country,province,product_id,sum(browser_count) browser_count,city_concat_func(city)city_infos
+        |         from area_browser_product_count_view
+        |         group by date,country,province,product_id
+        |   )temp
+        |)tmp
+        |where rank<=3
+      """.stripMargin)
+
+    df.printSchema()
+
+    val connection = JdbcHelper.getConnection()
+    val areaTop3ProductArray = df.collect().map(row => {
+      val date_dimension_id: Int = DimensionDao.getDimensionId(DateDimension.buildDateDimension(row.getAs[String]("date")), connection)
+      val location_dimension_id: Int = DimensionDao.getDimensionId(new LocationDimension(0, row.getAs[String]("country"), row.getAs[String]("province"), GlobalConstants.VALUE_OF_ALL), connection)
+      val product_id: Long = row.getAs[String]("product_id").toLong
+      val browser_product_count: Long = row.getAs[Long]("browser_count")
+      val city_infos: String = row.getAs[String]("city_infos")
+      new AreaTop3Product(date_dimension_id, location_dimension_id, product_id, browser_product_count, city_infos)
+    })
+    if (connection != null)
+      connection.close()
+    AreaTop3ProductDao.deleteByDateDimensionId(areaTop3ProductArray(0).date_dimension_id)
+    AreaTop3ProductDao.insertBatch(areaTop3ProductArray)
+
+
+  }
+
   def main(args: Array[String]): Unit = {
+    val sparkConf = new SparkConf().setAppName(this.getClass.getSimpleName).setMaster("spark://hadoop-001:7077")
+    //调整spark-sql在shuffle阶段的任务并行度，默认是200
+    sparkConf.set("spark.sql.shuffle.partitions", "2")
+    val spark = SparkSession.builder().config(sparkConf).getOrCreate()
+    val sc = spark.sparkContext
+    sc.addJar("D:\\bigdata_shixun_project\\data_analysis_project\\target\\data_analysis_project-1.0-SNAPSHOT.jar")
+
     //1,验证参数是否正确
     validateInputArgs(args)
 
     //2,从hbase中加载指定日期的日志
-    val eventLogRDD = loadDataFromHbase()
+    val eventLogRDD = loadDataFromHbase(sc)
+    eventLogRDD.cache()
 
-    //3,按时间和平台维度对我们的session进行统计分析，将结果保持到mysql表中
+    // 按时间和平台维度对我们的session进行统计分析，将结果保持到mysql表中
     sessionVisitTimeAndStepLengthAnalysisStat(eventLogRDD)
+
+    //统计同一天同一个平台活跃用户数，新增用户数，会话个数
+    userStats(eventLogRDD)
+
+    //统计同一天同一个平台同一个地区活跃用户数，会话个数，会话跳出数
+    deviceLocationStats(eventLogRDD)
+
+    //统计同一天同一个平台每个事件发生的总的次数
+    UserCount(eventLogRDD)
+
+    //统计同一天同一地区浏览次数排名前3的商品
+    areaBrowserProductTop3Stats(eventLogRDD,spark)
 
     sc.stop()
   }
 }
+

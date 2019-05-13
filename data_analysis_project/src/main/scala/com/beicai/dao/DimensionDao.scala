@@ -2,7 +2,7 @@ package com.beicai.dao
 
 import java.sql.{Connection, PreparedStatement, ResultSet, SQLException, Statement}
 
-import com.beicai.bean.domain.dimension.{DateDimension, PlatformDimension}
+import com.beicai.bean.domain.dimension.{DateDimension, EventDimension, LocationDimension, PlatformDimension}
 
 /**
   * Created by lenovo on 2019/4/29.
@@ -29,11 +29,22 @@ object DimensionDao {
     }else if(dimension.isInstanceOf[PlatformDimension]){
       val platformDimension = dimension.asInstanceOf[PlatformDimension]
       preparedStatement.setObject(1,platformDimension.platformName)
-    }
+    }else if(dimension.isInstanceOf[LocationDimension]){
+      val locationDimension = dimension.asInstanceOf[LocationDimension]
+      preparedStatement.setObject(1,locationDimension.country)
+      preparedStatement.setObject(2, locationDimension.province)
+      preparedStatement.setObject(3, locationDimension.city)
+    } else if(dimension.isInstanceOf[EventDimension]) {
+    val eventDimension = dimension.asInstanceOf[EventDimension]
+    preparedStatement.setObject(1, eventDimension.event_name)
+    preparedStatement.setObject(2, eventDimension.event_description)
+    preparedStatement.setObject(3, eventDimension.category)
   }
+}
 
 
-  /**
+
+/**
     * 执行sql语句
     *
     * @param sqlArray
@@ -111,11 +122,20 @@ object DimensionDao {
         "select id from dimension_platform where platform_name=?",
         "insert into dimension_platform(platform_name)values(?)"
       )
+    }else if(dimension.isInstanceOf[LocationDimension]){
+      sqlArray=Array(
+        "select id from dimension_location where country=? and province=? and city=?",
+        "insert into dimension_location(country,province,city)values(?,?,?)"
+      )
+    }else if(dimension.isInstanceOf[EventDimension]){
+      sqlArray = Array(
+        "select id from dimension_event where event_name=? and event_description=? and category=?",
+        "insert into dimension_event(event_name,event_description,category)values(?,?,?)"
+      )
     }
     synchronized({
       //执行sql语句
       executeSql(sqlArray,dimension,connection)
     })
-
   }
 }
